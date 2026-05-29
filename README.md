@@ -48,4 +48,6 @@ The package has been tested and installs for Python 3.9-3.12.
 Please contact Felix Zhou, felixzhou1@gmail.com
 
 ### Danuser Lab Links
+[Danuser Lab Website](https://www.danuserlab-utsw.org/)
+
 [Software Links](https://github.com/DanuserLab/)
