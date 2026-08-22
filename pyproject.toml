@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "v-InfoTrace"
+dynamic = ["version"]
+description = "Calculate multiscale pixel spatiotemporal information flow for 2D videos"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "Felix Y. Zhou" },
+]
+requires-python = ">=3.9,<3.13"
+dependencies = [
+    "numpy<2",
+    "contourpy<=1.2.0",
+    "opencv-contrib-python==4.5.*",
+    "scikit-image",
+    "scikit-learn",
+    "scipy",
+    "matplotlib",
+    "tqdm",
+    "imagecodecs<2025",
+    "joblib",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+[tool.setuptools]
+packages = ["InfoFlow"]
+
+[tool.setuptools.dynamic]
+version = { attr = "InfoFlow.__version__" }

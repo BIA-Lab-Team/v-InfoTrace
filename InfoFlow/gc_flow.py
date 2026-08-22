@@ -52,9 +52,52 @@ def GC_full_reduced_separate_regress_individual(img1, img2, lag=1, alpha=.1):
         logF = np.log(np.var(Y - clf_full.predict(X_full), axis=0)) #.mean())
         
         
-        # get the difference!. # not a pval ... but a magnitude. 
-        return logF - logL 
-    
+        # get the difference!. # not a pval ... but a magnitude.
+        return logF - logL
+
+
+def GC_full_reduced_confound(target, confounds, candidate, lag=1, alpha=.1):
+    """
+    Confound-aware / conditional variant of GC_full_reduced_separate_regress_individual.
+
+    Unlike the original, the reduced model here is a strict subset of the full
+    model's regressors (target's own lagged history + every confound's lagged
+    history, in both), so logF - logL isolates the marginal contribution of
+    `candidate` alone, having controlled for the target's own dynamics and any
+    confound blocks (e.g. the target's own spatial neighbors, or other channels).
+
+    target : (*, T) array - the effect/target block (Y)
+    confounds : list of (*, T) arrays - always-included baseline regressors
+    candidate : (*, T) array - the candidate cause being tested
+    """
+    from sklearn.linear_model import Ridge
+    import numpy as np
+
+    def _lag_stack(arr, lag):
+        flat = arr.reshape(-1, arr.shape[-1]).T  # (T, n)
+        return [flat[lag - ll:-ll] for ll in range(1, lag + 1)]
+
+    Y = (target.reshape(-1, target.shape[-1]).T)[lag:]
+
+    baseline = _lag_stack(target, lag)
+    for confound in confounds:
+        baseline = baseline + _lag_stack(confound, lag)
+    X_reduced = np.hstack(baseline)
+
+    clf = Ridge(alpha=alpha)
+    clf.fit(X_reduced, Y)
+    logL = np.log(np.var(Y - clf.predict(X_reduced), axis=0))
+
+    candidate_flat = candidate.reshape(-1, candidate.shape[-1]).T
+    X_full = np.hstack(baseline + _lag_stack(candidate, lag) + [candidate_flat[lag:]])
+
+    clf_full = Ridge(alpha=alpha)
+    clf_full.fit(X_full, Y)
+    logF = np.log(np.var(Y - clf_full.predict(X_full), axis=0))
+
+    return np.nanmean(logF - logL)
+
+
 if __name__=="__main__":
 
     # import pyinform

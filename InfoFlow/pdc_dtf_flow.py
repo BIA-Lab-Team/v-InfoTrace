@@ -361,6 +361,39 @@ def PDC_central_flow(img1, img2, lag=5, alpha=.1, random_state=0):
     return corr_array
 
 
+def PDC_central_flow_confound(target, confounds, candidate, lag=5, alpha=.1):
+    """
+    Confound-aware variant of PDC_central_flow. Stacks [target; *confounds; candidate]
+    into one joint MVAR model -- MVAR fitting is inherently multivariate, so
+    the partial directed coherence from candidate to target is already
+    conditioned on every other stacked series (the confounds).
+
+    target, candidate : (*, T) arrays
+    confounds : list of (*, T) arrays
+    """
+    import numpy as np
+
+    def _flat(arr):
+        return arr.reshape(-1, arr.shape[-1])  # (n, T)
+
+    blocks = [target] + list(confounds) + [candidate]
+    flats = [_flat(b) for b in blocks]
+    sizes = [f.shape[0] for f in flats]
+    stacked = np.vstack(flats)
+
+    A_est, sigma = mvar_fit(stacked, p=lag)
+    sigma = np.abs(np.diag(sigma))
+
+    P, freqs = PDC(A_est, sigma)
+    P_sum = np.nansum(P, axis=0)
+
+    N_t = sizes[0]
+    N_c = sizes[-1]
+    P_block = P_sum[-N_c:, :N_t]  # candidate rows, target cols -- candidate -> target
+
+    return np.nanmean(P_block)
+
+
 def plot_all(freqs, P, name):
     """Plot grid of subplots
     """

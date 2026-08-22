@@ -7,3 +7,4 @@ scipy
 matplotlib
 tqdm
 imagecodecs<2025
+joblib

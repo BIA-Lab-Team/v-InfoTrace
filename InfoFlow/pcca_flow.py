@@ -113,8 +113,93 @@ class PCCA_GC_Calculator:
 
         return Gyx
 
+    def calcGrangerCausalityConfound(self, confounds, k, m, eta_xt=0.00001, eta_yt=0.00001, eta_xtkm=0.00001):
+        """
+        Native confound-aware variant of calcGrangerCausality. Identical in
+        every respect except x_tk_m (X's own lag-history block, the thing
+        partialled out of everything else before the generalized eigenvalue
+        problem) is extended to also include each confound's own lag
+        history, alongside X's. With confounds=[] this reduces exactly to
+        calcGrangerCausality.
 
-def pcca_cause(img1, img2, 
+        confounds : list of (N, dim_i) arrays, same convention as self.X/self.Y
+        """
+        N = self.X.shape[0]
+
+        x_t = []
+        y_t = []
+        x_tk_m = []
+        y_tk_m = []
+
+        for t in range(k + m - 1, N):
+            x_t.append(self.X[t])
+            y_t.append(self.Y[t])
+
+            cut_x = self.X[t - k - m + 1: t - k + 1]
+            confound_cuts = [np.ravel(c[t - k - m + 1: t - k + 1][::-1]) for c in confounds]
+            x_tk_m.append(np.concatenate([np.ravel(cut_x[::-1])] + confound_cuts))
+            cut_y = self.Y[t - k - m + 1: t - k + 1]
+            y_tk_m.append(np.ravel(cut_y[::-1]))
+
+        x_t = (np.array(x_t)).T
+        y_t = (np.array(y_t)).T
+        x_tk_m = (np.array(x_tk_m)).T
+        y_tk_m = (np.array(y_tk_m)).T
+
+        dim_x_t = x_t.shape[0]
+        dim_y_t = y_t.shape[0]
+        dim_x_tk_m = x_tk_m.shape[0]
+
+        x = np.r_[x_t, y_t]
+        y = np.r_[x_tk_m, y_tk_m]
+
+        sigma = np.cov(m=x, y=y, rowvar=True)
+
+        yt_start_idx = dim_x_t
+        xtkm_start_idx = dim_x_t + dim_y_t
+        ytkm_start_idx = dim_x_t + dim_y_t + dim_x_tk_m
+
+        sigma_xt_xt = sigma[    0 : yt_start_idx, 0              : yt_start_idx]
+        sigma_xt_xtkm = sigma[  0 : yt_start_idx, xtkm_start_idx : ytkm_start_idx]
+        sigma_xt_ytkm = sigma[  0 : yt_start_idx, ytkm_start_idx :]
+
+        sigma_xtkm_xt = sigma[  xtkm_start_idx : ytkm_start_idx, 0 : yt_start_idx]
+        sigma_xtkm_xtkm = sigma[xtkm_start_idx : ytkm_start_idx, xtkm_start_idx : ytkm_start_idx]
+        sigma_xtkm_ytkm = sigma[xtkm_start_idx : ytkm_start_idx, ytkm_start_idx : ]
+
+        sigma_ytkm_xt = sigma[  ytkm_start_idx:, 0              : yt_start_idx]
+        sigma_ytkm_xtkm = sigma[ytkm_start_idx:, xtkm_start_idx : ytkm_start_idx]
+        sigma_ytkm_ytkm = sigma[ytkm_start_idx:, ytkm_start_idx : ]
+
+        sigma_tilde_ytkm_xt_xtkm = sigma_ytkm_xt\
+                                 - np.dot(np.dot(2 * sigma_ytkm_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_xt)\
+                                 + np.dot(np.dot(np.dot(np.dot(sigma_ytkm_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))),sigma_xtkm_xtkm), np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_xt)
+
+        sigma_tilde_xt_xt_xtkm = sigma_xt_xt \
+                                   - np.dot(np.dot(2 * sigma_xt_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_xt) \
+                                   + np.dot(np.dot(np.dot(np.dot(sigma_xt_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))),sigma_xtkm_xtkm), np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_xt)
+
+        sigma_tilde_xt_ytkm_xtkm = sigma_xt_ytkm \
+                                   - np.dot(np.dot(2 * sigma_xt_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_ytkm) \
+                                   + np.dot(np.dot(np.dot(np.dot(sigma_xt_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))),sigma_xtkm_xtkm), np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_ytkm)
+
+        sigma_tilde_ytkm_ytkm_xtkm = sigma_ytkm_ytkm \
+                                   - np.dot(np.dot(2 * sigma_ytkm_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_ytkm) \
+                                   + np.dot(np.dot(np.dot(np.dot(sigma_ytkm_xtkm, np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))),sigma_xtkm_xtkm), np.linalg.inv(self.calcSigmaHat(sigma=sigma_xtkm_xtkm, eta=eta_xtkm))), sigma_xtkm_ytkm)
+
+        A = np.dot(np.dot(sigma_tilde_ytkm_xt_xtkm, np.linalg.inv(sigma_tilde_xt_xt_xtkm + eta_xt * np.identity(sigma_tilde_xt_xt_xtkm.shape[0]))), sigma_tilde_xt_ytkm_xtkm)
+        B = sigma_tilde_ytkm_ytkm_xtkm + eta_yt * np.identity(sigma_tilde_ytkm_ytkm_xtkm.shape[0])
+
+        eigenvalues = np.real(linalg.eig(a=A, b=B)[0])
+        eigenvalue = np.max(eigenvalues)
+        if eigenvalue > 1.0:
+            eigenvalue = 0.9999
+        Gyx = 0.5 * math.log(1 / (1 - eigenvalue), 2)
+
+        return Gyx
+
+
+def pcca_cause(img1, img2,
                 k=1, m=3, 
                 eta_xt=5e-4, 
                 eta_yt=5e-4,
@@ -135,13 +220,108 @@ def pcca_cause(img1, img2,
     # Gy_to_x = calc_xy.calcGrangerCausality(k=1, m=1,
     #                                        eta_xt=1e-5, eta_yt=1e-5, eta_xtkm=1e-5) # delay lag=1 and order=1 # this is slow.... 
     Gy_to_x = calc_xy.calcGrangerCausality(k=k, m=m,
-                                           eta_xt=eta_xt, 
-                                           eta_yt=eta_yt, 
-                                           eta_xtkm=eta_xtkm) # etas are very important 
+                                           eta_xt=eta_xt,
+                                           eta_yt=eta_yt,
+                                           eta_xtkm=eta_xtkm) # etas are very important
     return Gy_to_x
 
 
-def pcca_cause_pixel(img1, img2, 
+def pcca_cause_confound(target, confounds, candidate,
+                         k=1, m=3,
+                         eta_xt=5e-4,
+                         eta_yt=5e-4,
+                         eta_xtkm=5e-4,
+                         alpha=1.0):
+    """
+    Confound-aware variant of pcca_cause. pcca_cause itself has no built-in
+    conditioning, so this residualizes `target` and `candidate` against the
+    confound blocks first (standard partial-correlation technique) and runs
+    the original canonical-correlation-based measure on the residuals.
+
+    target, candidate : (*, T) arrays
+    confounds : list of (*, T) arrays
+    """
+    from InfoFlow.confound_utils import residualize_against_confounds
+
+    target_resid = residualize_against_confounds(target, confounds, alpha=alpha)
+    candidate_resid = residualize_against_confounds(candidate, confounds, alpha=alpha)
+
+    return pcca_cause(target_resid, candidate_resid,
+                       k=k, m=m,
+                       eta_xt=eta_xt,
+                       eta_yt=eta_yt,
+                       eta_xtkm=eta_xtkm)
+
+
+def _compress_confounds_pca(confounds):
+    """
+    Pool every confound block's pixels together and reduce them to a single
+    1-D time series (their first principal component), rather than
+    concatenating each confound's own winsize^2-dim lag window into xtkm
+    directly. xtkm's growth is then always +m regardless of how many
+    confound channels are present, avoiding sigma_xtkm_xtkm becoming
+    rank-deficient relative to the handful of time samples per window
+    (confirmed empirically: one raw winsize^2-dim confound collapsed a
+    real signal to near zero).
+
+    confounds : list of (*, T) arrays
+    Returns : [] if confounds is empty, else a single-element list containing
+        one (T, 1) array (matching PCCA_GC_Calculator's (N, dim) convention).
+    """
+    if len(confounds) == 0:
+        return []
+
+    T = confounds[0].shape[-1]
+    pooled = np.vstack([c.reshape(-1, T) for c in confounds])  # (n_pixels_total, T)
+    pooled_t = pooled.T                                         # (T, n_pixels_total)
+    pooled_t = pooled_t - pooled_t.mean(axis=0, keepdims=True)
+
+    U, S, Vt = np.linalg.svd(pooled_t, full_matrices=False)
+    pc1 = U[:, 0] * S[0]  # (T,) -- dominant shared temporal pattern across all confound pixels
+
+    return [pc1.reshape(-1, 1)]  # (T, 1)
+
+
+def pcca_cause_confound_native(target, confounds, candidate,
+                                k=1, m=3,
+                                eta_xt=5e-4,
+                                eta_yt=5e-4,
+                                eta_xtkm=5e-4):
+    """
+    Native confound-aware variant of pcca_cause: folds the confound blocks
+    directly into PCCA_GC_Calculator's own partial-covariance conditioning
+    step (calcGrangerCausalityConfound) instead of pre-residualizing via OLS
+    the way pcca_cause_confound does. With confounds=[] this is identical to
+    pcca_cause(target, candidate, ...).
+
+    All confound blocks are pooled and compressed to a single 1-D PCA
+    component before being folded in (see _compress_confounds_pca) -- using
+    them at full per-pixel resolution overwhelms the available time samples
+    and washes out the signal regardless of ridge regularization.
+
+    Uses the same (target, candidate) -> (Y_cause, X) mapping as pcca_cause
+    and pcca_cause_confound (target tested as cause of candidate) -- kept
+    as-is, not swapped.
+
+    target, candidate : (*, T) arrays
+    confounds : list of (*, T) arrays
+    """
+    Y = target.copy()
+    X = candidate.copy()
+
+    Y = Y.reshape(-1, Y.shape[-1]).T
+    X = X.reshape(-1, X.shape[-1]).T
+    confounds_flat = _compress_confounds_pca(confounds)
+
+    calc_xy = PCCA_GC_Calculator(X=X, Y_cause=Y)
+    Gy_to_x = calc_xy.calcGrangerCausalityConfound(confounds_flat, k=k, m=m,
+                                                    eta_xt=eta_xt,
+                                                    eta_yt=eta_yt,
+                                                    eta_xtkm=eta_xtkm)
+    return Gy_to_x
+
+
+def pcca_cause_pixel(img1, img2,
                      k=1, 
                      m=3, 
                      eta_xt=5e-4, 

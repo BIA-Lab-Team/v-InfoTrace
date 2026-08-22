@@ -22,3 +22,28 @@ __pycache__/
 *.egg-info
 *.egg
 *.DS_Store
+
+# Generated output from example/demo/comparison scripts (not part of the
+# distributed package -- regenerate by running the example scripts).
+results/
+
+# Example crowd-flow dataset: keep only one representative video for the
+# example scripts; the rest of the original UCF Crowd Segmentation dataset
+# is too large to version and isn't needed beyond that one demo clip.
+data/UCF_CrowdsDataset/*.mov
+!data/UCF_CrowdsDataset/3687-18_70.mov
+
+# One-off development/debugging scripts used while building and validating
+# the multichannel and 3D InfoFlow extensions -- not part of the packaged
+# library or the maintained example scripts (2023-03-31_testScript_InfoFlow_shorter.py,
+# 2026-08-22_exampleScript_InfoFlow_multichannel.py, 2026-08-22_exampleScript_InfoFlow_3D.py).
+/compare_seq_vs_parallel.py
+/test_infoflow3d.py
+/test_multichannel_infoflow.py
+/test_parallel_infoflow.py
+/visualize_joint_corr.py
+/visualize_joint_corr_scores.py
+/visualize_multichannel_flows.py
+/visualize_standard_ddc.py
+/visualize_standard_ddc_scale4.py
+/visualize_standard_pcca.py

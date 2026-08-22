@@ -236,8 +236,67 @@ def Linear_LK_cause(img1, img2, eps=1e-12, alpha=1e-2):
             #### this needs double checking!. ---> i think the indices are round!. 
             corr_array[ii,jj] = W_out[N//2, ind] * np.sqrt(C_[N//2,ind+N] / C_[N//2,N//2] + eps) # influence on the previous timepoint central pixel!.
             corr_array[ii,jj] = W_out[ind, ind] * np.sqrt(C_[ind,ind+N] / C_[ind,ind] + eps) # influence on the previous timepoint central pixel!.
-    
+
     return corr_array
+
+
+def _linear_lk_lagged(target_flat, confound_flats, candidate_flat, lag, alpha=1e-2, eps=1e-12):
+    """
+    Explicit-design-matrix lagged generalization of Linear_LK, mirroring
+    DDC_flow._differential_covariance_lagged (Linear_LK and
+    differential_covariance share the same underlying least-squares
+    formula) -- see that function's docstring for why a naive pre-shift of
+    an input array doesn't work with this family of contemporaneous
+    estimators.
+    """
+    import numpy as np
+
+    T = target_flat.shape[1]
+    idx = np.arange(lag, T - 1)
+
+    dX = target_flat[:, idx + 1] - target_flat[:, idx]
+    X_self = target_flat[:, idx + 1]
+    X_conf = [c[:, idx + 1] for c in confound_flats]
+    X_cand = candidate_flat[:, idx - lag]
+
+    X = np.vstack([X_self] + X_conf + [X_cand])
+
+    dX_X = dX.dot(X.T)
+    X_X = X.dot(X.T)
+    W = dX_X.dot(np.linalg.inv(X_X + alpha * np.eye(X_X.shape[0])))
+
+    return W, X_X
+
+
+def Linear_LK_cause_confound(target, confounds, candidate, eps=1e-12, alpha=1e-2, lag=1):
+    """
+    Confound-aware, lag-aware variant of Linear_LK_cause -- see
+    _linear_lk_lagged / DDC_flow._differential_covariance_lagged for why an
+    explicit lagged design is needed.
+
+    target, candidate : (*, T) arrays
+    confounds : list of (*, T) arrays
+    """
+    import numpy as np
+
+    def _flat(arr):
+        return arr.reshape(-1, arr.shape[-1])  # (n, T)
+
+    target_flat = _flat(target)
+    confound_flats = [_flat(c) for c in confounds]
+    candidate_flat = _flat(candidate)
+
+    W_, C_ = _linear_lk_lagged(target_flat, confound_flats, candidate_flat, lag, alpha=alpha, eps=eps)
+
+    N_t = target_flat.shape[0]
+    N_c = candidate_flat.shape[0]
+    W_out = W_[:, -N_c:]
+    C_out = C_[:N_t, -N_c:]
+    C_diag_t = np.diag(C_)[:N_t]
+
+    score = W_out * np.sqrt(np.abs(C_out) / (C_diag_t[:, None] + eps) + eps)
+
+    return np.nanmean(score)
 
 
 # def Linear_LK_cause(img1, img2, eps=1e-12, alpha=1e-2):

@@ -6,7 +6,69 @@ Created on Thu Aug 11 10:22:15 2022
 @author: s205272
 """
 
-    
+
+import numpy as np
+
+
+def _snap_odd_winsize(winsize):
+    """
+    winsize must be odd so every sub-block has a well-defined single center
+    pixel. Rather than rejecting even input, snap to the nearest odd integer
+    and warn.
+    """
+    import warnings
+    snapped = (winsize // 2) * 2 + 1
+    if snapped != winsize:
+        warnings.warn(f"winsize={winsize} is even; snapping to nearest odd value {snapped}.")
+    return snapped
+
+
+def _prepare_windows(vid, winsize):
+    """
+    Shared pad + sliding-window + coordinate-grid setup used by all the
+    causal_flow*/causal_block_flow* drivers.
+    """
+    frame_ = np.pad(vid.transpose(1,2,0), [[winsize,winsize], [winsize,winsize], [0,0]], mode='constant', constant_values=0)
+    windows_3 = sliding_window_array_time(frame_, window_size=(3*winsize), overlap=2*winsize)
+    x, y = get_coordinates(image_size=frame_[:,:,0].shape,
+                            search_area_size=(3*winsize), overlap=2*winsize)
+    xy_coords = np.dstack([x,y])
+    return windows_3, xy_coords
+
+
+def _worker_causal_flow(args):
+    window, winsize, cause_fnc, kwargs = args
+    corr_array = cause_fnc(
+        window[winsize:2*winsize, winsize:2*winsize],
+        window[winsize:2*winsize, winsize:2*winsize],
+        **kwargs
+    ).reshape((winsize, winsize))
+    mid = corr_array.shape[1] // 2
+    cx = -np.nansum(corr_array[:, :mid]) + np.nansum(corr_array[:, mid+1:])
+    cy = -np.nansum(corr_array[:mid]) + np.nansum(corr_array[mid+1:])
+    intensity = np.nansum(corr_array)
+    return -(np.hstack([cy, cx]) * intensity)
+
+
+def _worker_causal_flow_scores(args):
+    window, winsize, cause_fnc, kwargs = args
+    return cause_fnc(
+        window[winsize:2*winsize, winsize:2*winsize],
+        window[winsize:2*winsize, winsize:2*winsize],
+        **kwargs
+    ).reshape((winsize, winsize))
+
+
+def _worker_causal_block_flow(args):
+    window, winsize, cause_fnc, kwargs = args
+    corr_array = cause_fnc(window, window, **kwargs).reshape((winsize, winsize))
+    mid = corr_array.shape[1] // 2
+    cx = -np.nansum(corr_array[:, :mid]) + np.nansum(corr_array[:, mid+1:])
+    cy = -np.nansum(corr_array[:mid]) + np.nansum(corr_array[mid+1:])
+    intensity = np.nansum(corr_array)
+    return np.hstack([cy, cx]) * intensity
+
+
 def get_field_shape(image_size, search_area_size, overlap):
     """Compute the shape of the resulting flow field.
     Given the image size, the interrogation window size and
@@ -278,28 +340,14 @@ def read_video_cv2(avifile):
 
 def causal_flow(vid, cause_fnc, winsize=3, **kwargs):
 
-    import scipy.ndimage as ndimage 
-    from tqdm import tqdm 
-    import numpy as np 
-    import skimage.transform as sktform 
-    
-    frame_a_ = np.pad(vid.transpose(1,2,0), [[winsize,winsize], [winsize,winsize], [0,0]], mode='constant', constant_values=0)
-    
-    # windows = moving_window_array(frame_a[:,:,0], window_size=winsize, overlap=winsize//2)
-    # windows_2 = sliding_window_array(frame_a[:,:,0], window_size=winsize, overlap=winsize//2)
-    windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=2*winsize)
-    # windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=winsize//2)
-    x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-                            search_area_size=(3*winsize), overlap=2*winsize) # so this is correct !. 
-    # x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-    #                        search_area_size=(3*winsize), overlap=winsize//2) # so this is correct !. 
-    
-    # windows_3 = sliding_window_array_time(frame_a_, window_size=(1*winsize), overlap=0)
-    # # windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=winsize//2)
-    # x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-    #                         search_area_size=(1*winsize), overlap=0) # so this is correct !. 
-    xy_coords = np.dstack([x,y])
-    
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import numpy as np
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    windows_3, xy_coords = _prepare_windows(vid, winsize)
+
     GC_vectors = []
     
     # for ii in tqdm(np.arange(len(windows_3))):
@@ -338,28 +386,14 @@ def causal_flow(vid, cause_fnc, winsize=3, **kwargs):
 
 def causal_flow_scores(vid, cause_fnc, winsize=3, **kwargs):
 
-    import scipy.ndimage as ndimage 
-    from tqdm import tqdm 
-    import numpy as np 
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import numpy as np
     import skimage.transform as sktform
-    
-    frame_a_ = np.pad(vid.transpose(1,2,0), [[winsize,winsize], [winsize,winsize], [0,0]], mode='constant', constant_values=0)
-    
-    # windows = moving_window_array(frame_a[:,:,0], window_size=winsize, overlap=winsize//2)
-    # windows_2 = sliding_window_array(frame_a[:,:,0], window_size=winsize, overlap=winsize//2)
-    windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=2*winsize)
-    # windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=winsize//2)
-    x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-                            search_area_size=(3*winsize), overlap=2*winsize) # so this is correct !. 
-    # x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-    #                        search_area_size=(3*winsize), overlap=winsize//2) # so this is correct !. 
-    
-    # windows_3 = sliding_window_array_time(frame_a_, window_size=(1*winsize), overlap=0)
-    # # windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=winsize//2)
-    # x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-    #                         search_area_size=(1*winsize), overlap=0) # so this is correct !. 
-    xy_coords = np.dstack([x,y])
-    
+
+    winsize = _snap_odd_winsize(winsize)
+    windows_3, xy_coords = _prepare_windows(vid, winsize)
+
     GC_scores = []
     
     # for ii in tqdm(np.arange(len(windows_3))):
@@ -424,28 +458,14 @@ For use with PCCA!.
 """
 def causal_block_flow(vid, cause_fnc, winsize=3, **kwargs):
 
-    import scipy.ndimage as ndimage 
-    from tqdm import tqdm 
-    import numpy as np 
-    import skimage.transform as sktform 
-    
-    frame_a_ = np.pad(vid.transpose(1,2,0), [[winsize,winsize], [winsize,winsize], [0,0]], mode='constant', constant_values=0)
-    
-    # windows = moving_window_array(frame_a[:,:,0], window_size=winsize, overlap=winsize//2)
-    # windows_2 = sliding_window_array(frame_a[:,:,0], window_size=winsize, overlap=winsize//2)
-    windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=2*winsize)
-    # windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=winsize//2)
-    x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-                            search_area_size=(3*winsize), overlap=2*winsize) # so this is correct !. 
-    # x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-    #                        search_area_size=(3*winsize), overlap=winsize//2) # so this is correct !. 
-    
-    # windows_3 = sliding_window_array_time(frame_a_, window_size=(1*winsize), overlap=0)
-    # # windows_3 = sliding_window_array_time(frame_a_, window_size=(3*winsize), overlap=winsize//2)
-    # x, y = get_coordinates(image_size=frame_a_[:,:,0].shape, 
-    #                         search_area_size=(1*winsize), overlap=0) # so this is correct !. 
-    xy_coords = np.dstack([x,y])
-    
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import numpy as np
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    windows_3, xy_coords = _prepare_windows(vid, winsize)
+
     GC_vectors = []
     
     # for ii in tqdm(np.arange(len(windows_3))):
@@ -479,6 +499,78 @@ def causal_block_flow(vid, cause_fnc, winsize=3, **kwargs):
     GC_vectors = np.dstack([sktform.resize(GC_vectors[...,ch], output_shape=vid.shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
     
     
+    return GC_vectors
+
+
+def causal_flow_parallel(vid, cause_fnc, winsize=3, n_jobs=-1, **kwargs):
+
+    from joblib import Parallel, delayed
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import numpy as np
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    windows_3, xy_coords = _prepare_windows(vid, winsize)
+
+    args_list = [(windows_3[ii], winsize, cause_fnc, kwargs) for ii in range(len(windows_3))]
+    GC_vectors = Parallel(n_jobs=n_jobs, prefer='processes')(
+        delayed(_worker_causal_flow)(a) for a in tqdm(args_list)
+    )
+
+    GC_vectors = np.array(GC_vectors).reshape((xy_coords.shape))
+    GC_vectors[...,0] = ndimage.gaussian_filter(GC_vectors[...,0], sigma=1.)
+    GC_vectors[...,1] = ndimage.gaussian_filter(GC_vectors[...,1], sigma=1.)
+    GC_vectors = np.dstack([sktform.resize(GC_vectors[...,ch], output_shape=vid.shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+
+    return GC_vectors
+
+
+def causal_flow_scores_parallel(vid, cause_fnc, winsize=3, n_jobs=-1, **kwargs):
+
+    from joblib import Parallel, delayed
+    from tqdm import tqdm
+    import numpy as np
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    windows_3, xy_coords = _prepare_windows(vid, winsize)
+
+    args_list = [(windows_3[ii], winsize, cause_fnc, kwargs) for ii in range(len(windows_3))]
+    GC_scores = Parallel(n_jobs=n_jobs, prefer='processes')(
+        delayed(_worker_causal_flow_scores)(a) for a in tqdm(args_list)
+    )
+
+    GC_scores = np.array(GC_scores).reshape((xy_coords.shape[:-1])+(winsize, winsize))
+    GC_scores = sktform.resize(GC_scores, output_shape=vid.shape[1:]+(winsize, winsize), preserve_range=True, order=1)
+
+    return GC_scores
+
+
+"""
+Parallel version of causal_block_flow. For use with PCCA and other block-based measures.
+"""
+def causal_block_flow_parallel(vid, cause_fnc, winsize=3, n_jobs=-1, **kwargs):
+
+    from joblib import Parallel, delayed
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import numpy as np
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    windows_3, xy_coords = _prepare_windows(vid, winsize)
+
+    args_list = [(windows_3[ii], winsize, cause_fnc, kwargs) for ii in range(len(windows_3))]
+    GC_vectors = Parallel(n_jobs=n_jobs, prefer='processes')(
+        delayed(_worker_causal_block_flow)(a) for a in tqdm(args_list)
+    )
+
+    GC_vectors = np.array(GC_vectors).reshape((xy_coords.shape))
+    GC_vectors[...,0] = ndimage.gaussian_filter(GC_vectors[...,0], sigma=1.)
+    GC_vectors[...,1] = ndimage.gaussian_filter(GC_vectors[...,1], sigma=1.)
+    GC_vectors = np.dstack([sktform.resize(GC_vectors[...,ch], output_shape=vid.shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+
     return GC_vectors
 
 
@@ -527,8 +619,782 @@ def laplacian_video_pyramid(vid, scales=[2,4,8], sigma=1):
         
         vids_blur.append(ds_im)
     vids_laplace.append(ds_im)
-        
+
     return vids_laplace
+
+
+"""
+Confound-aware multi-channel pixel information flow.
+
+For a pair (source, target) -- including source==target (within-channel) --
+each sliding window is decomposed into:
+  - target_center   : target channel's own center winsize x winsize sub-block (Y to predict)
+  - confound_blocks : always-included baseline blocks -- target's own 8 neighbor
+                       sub-blocks when source != target (its own spatial dynamics,
+                       the "self-channel confound"), plus every channel other than
+                       {source, target}'s full 3winsize x 3winsize super-block
+  - candidate_positions : the 3x3 grid of blocks being tested for causal contribution --
+        source==target: target's own 8 neighbor sub-blocks (center excluded)
+        source!=target: source channel's own center + 8 neighbor sub-blocks (all 9)
+
+A confound-aware cause_fnc (e.g. GC_full_reduced_confound, DDC_cause_confound,
+Linear_LK_cause_confound, PDC_central_flow_confound, pcca_cause_confound,
+nd_xcorr_lag_confound) is called once per candidate position, producing a 3x3
+score map, converted to a directional flow vector exactly like causal_block_flow.
+"""
+
+_POS_TO_IDX = {
+    'tl': (0,0), 'tc': (0,1), 'tr': (0,2),
+    'ml': (1,0),              'mr': (1,2),
+    'bl': (2,0), 'bc': (2,1), 'br': (2,2),
+    'mc': (1,1),
+}
+
+
+def _sub_positions(block, winsize):
+    w = winsize
+    return {
+        'tl': block[0:w,       0:w],       'tc': block[0:w,       w:2*w],     'tr': block[0:w,       2*w:3*w],
+        'ml': block[w:2*w,     0:w],       'mc': block[w:2*w,     w:2*w],     'mr': block[w:2*w,     2*w:3*w],
+        'bl': block[2*w:3*w,   0:w],       'bc': block[2*w:3*w,   w:2*w],     'br': block[2*w:3*w,   2*w:3*w],
+    }
+
+
+def _confound_and_candidates(windows_dict, ii, winsize, source_idx, target_idx, channel_indices):
+    target_positions = _sub_positions(windows_dict[target_idx][ii], winsize)
+    target_center = target_positions['mc']
+
+    confound_blocks = []
+    if source_idx != target_idx:
+        confound_blocks += [v for k, v in target_positions.items() if k != 'mc']
+    for ch in channel_indices:
+        if ch not in (source_idx, target_idx):
+            confound_blocks.append(windows_dict[ch][ii])
+
+    if source_idx == target_idx:
+        candidate_positions = {k: v for k, v in target_positions.items() if k != 'mc'}
+    else:
+        candidate_positions = _sub_positions(windows_dict[source_idx][ii], winsize)
+
+    return target_center, confound_blocks, candidate_positions
+
+
+def _score_to_vector(corr_array):
+    mid = 1  # corr_array is always 3x3
+    cx = -np.nansum(corr_array[:, :mid]) + np.nansum(corr_array[:, mid+1:])
+    cy = -np.nansum(corr_array[:mid]) + np.nansum(corr_array[mid+1:])
+    intensity = np.nansum(corr_array)
+    return np.hstack([cy, cx]) * intensity
+
+
+def _worker_causal_flow_multichannel(args):
+    target_center, confound_blocks, candidate_positions, cause_fnc_confound, kwargs = args
+    corr_array = np.full((3,3), np.nan)
+    for pos, block in candidate_positions.items():
+        corr_array[_POS_TO_IDX[pos]] = cause_fnc_confound(target_center, confound_blocks, block, **kwargs)
+    corr_array = np.nan_to_num(corr_array, nan=0.0)
+    return _score_to_vector(corr_array)
+
+
+def _worker_causal_flow_scores_multichannel(args):
+    target_center, confound_blocks, candidate_positions, cause_fnc_confound, kwargs = args
+    corr_array = np.full((3,3), np.nan)
+    for pos, block in candidate_positions.items():
+        corr_array[_POS_TO_IDX[pos]] = cause_fnc_confound(target_center, confound_blocks, block, **kwargs)
+    return np.nan_to_num(corr_array, nan=0.0)
+
+
+def causal_flow_scores_multichannel(vid_channels, cause_fnc_confound, source_idx, target_idx, winsize=3, **kwargs):
+    """
+    vid_channels : list/tuple of (T,H,W) arrays, one per channel
+    Returns raw 3x3 score maps: (H,W,3,3)
+    """
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    channel_indices = list(range(len(vid_channels)))
+
+    windows_dict = {}
+    xy_coords = None
+    for ch in channel_indices:
+        w3, xy = _prepare_windows(vid_channels[ch], winsize)
+        windows_dict[ch] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[target_idx])
+    scores = []
+    for ii in tqdm(np.arange(n_windows)):
+        target_center, confound_blocks, candidate_positions = _confound_and_candidates(
+            windows_dict, ii, winsize, source_idx, target_idx, channel_indices)
+        corr_array = np.full((3,3), np.nan)
+        for pos, block in candidate_positions.items():
+            corr_array[_POS_TO_IDX[pos]] = cause_fnc_confound(target_center, confound_blocks, block, **kwargs)
+        scores.append(np.nan_to_num(corr_array, nan=0.0))
+
+    vid_shape = vid_channels[target_idx].shape
+    scores = np.array(scores).reshape(xy_coords.shape[:-1] + (3,3))
+    scores = sktform.resize(scores, output_shape=vid_shape[1:] + (3,3), preserve_range=True, order=1)
+
+    return scores
+
+
+def causal_flow_multichannel(vid_channels, cause_fnc_confound, source_idx, target_idx, winsize=3, **kwargs):
+    """
+    vid_channels : list/tuple of (T,H,W) arrays, one per channel
+    Returns a directional flow field: (H,W,2)
+    """
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    channel_indices = list(range(len(vid_channels)))
+
+    windows_dict = {}
+    xy_coords = None
+    for ch in channel_indices:
+        w3, xy = _prepare_windows(vid_channels[ch], winsize)
+        windows_dict[ch] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[target_idx])
+    vectors = []
+    for ii in tqdm(np.arange(n_windows)):
+        target_center, confound_blocks, candidate_positions = _confound_and_candidates(
+            windows_dict, ii, winsize, source_idx, target_idx, channel_indices)
+        corr_array = np.full((3,3), np.nan)
+        for pos, block in candidate_positions.items():
+            corr_array[_POS_TO_IDX[pos]] = cause_fnc_confound(target_center, confound_blocks, block, **kwargs)
+        corr_array = np.nan_to_num(corr_array, nan=0.0)
+        vectors.append(_score_to_vector(corr_array))
+
+    vid_shape = vid_channels[target_idx].shape
+    vectors = np.array(vectors).reshape(xy_coords.shape)
+    vectors[...,0] = ndimage.gaussian_filter(vectors[...,0], sigma=1.)
+    vectors[...,1] = ndimage.gaussian_filter(vectors[...,1], sigma=1.)
+    vectors = np.dstack([sktform.resize(vectors[...,ch], output_shape=vid_shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+
+    return vectors
+
+
+def causal_flow_scores_multichannel_parallel(vid_channels, cause_fnc_confound, source_idx, target_idx, winsize=3, n_jobs=-1, **kwargs):
+
+    from joblib import Parallel, delayed
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    channel_indices = list(range(len(vid_channels)))
+
+    windows_dict = {}
+    xy_coords = None
+    for ch in channel_indices:
+        w3, xy = _prepare_windows(vid_channels[ch], winsize)
+        windows_dict[ch] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[target_idx])
+    args_list = []
+    for ii in range(n_windows):
+        target_center, confound_blocks, candidate_positions = _confound_and_candidates(
+            windows_dict, ii, winsize, source_idx, target_idx, channel_indices)
+        args_list.append((target_center, confound_blocks, candidate_positions, cause_fnc_confound, kwargs))
+
+    scores = Parallel(n_jobs=n_jobs, prefer='processes')(
+        delayed(_worker_causal_flow_scores_multichannel)(a) for a in tqdm(args_list)
+    )
+
+    vid_shape = vid_channels[target_idx].shape
+    scores = np.array(scores).reshape(xy_coords.shape[:-1] + (3,3))
+    scores = sktform.resize(scores, output_shape=vid_shape[1:] + (3,3), preserve_range=True, order=1)
+
+    return scores
+
+
+def causal_flow_multichannel_parallel(vid_channels, cause_fnc_confound, source_idx, target_idx, winsize=3, n_jobs=-1, **kwargs):
+
+    from joblib import Parallel, delayed
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    channel_indices = list(range(len(vid_channels)))
+
+    windows_dict = {}
+    xy_coords = None
+    for ch in channel_indices:
+        w3, xy = _prepare_windows(vid_channels[ch], winsize)
+        windows_dict[ch] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[target_idx])
+    args_list = []
+    for ii in range(n_windows):
+        target_center, confound_blocks, candidate_positions = _confound_and_candidates(
+            windows_dict, ii, winsize, source_idx, target_idx, channel_indices)
+        args_list.append((target_center, confound_blocks, candidate_positions, cause_fnc_confound, kwargs))
+
+    vectors = Parallel(n_jobs=n_jobs, prefer='processes')(
+        delayed(_worker_causal_flow_multichannel)(a) for a in tqdm(args_list)
+    )
+
+    vid_shape = vid_channels[target_idx].shape
+    vectors = np.array(vectors).reshape(xy_coords.shape)
+    vectors[...,0] = ndimage.gaussian_filter(vectors[...,0], sigma=1.)
+    vectors[...,1] = ndimage.gaussian_filter(vectors[...,1], sigma=1.)
+    vectors = np.dstack([sktform.resize(vectors[...,ch], output_shape=vid_shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+
+    return vectors
+
+
+def compute_channel_flows(vid_channels, cause_fnc_confound, pairs='all', winsize=3, parallel=False, scores=True, **kwargs):
+    """
+    Loop over requested (source, target) channel pairs and compute confound-aware
+    causal flow for each.
+
+    vid_channels : list/tuple of (T,H,W) arrays, one per channel
+    pairs : 'all' (every source/target combination, C^2 fields),
+            'within' (source==target only), 'cross' (source!=target only),
+            or an explicit list of (source_idx, target_idx) tuples
+    scores : if True, use the *_scores_* drivers (returns (H,W,3,3) score maps);
+             if False, use the vector drivers (returns (H,W,2) flow fields)
+
+    Returns dict {(source_idx, target_idx): flow_array}
+    """
+    n = len(vid_channels)
+    if pairs == 'all':
+        pair_list = [(s,t) for s in range(n) for t in range(n)]
+    elif pairs == 'within':
+        pair_list = [(c,c) for c in range(n)]
+    elif pairs == 'cross':
+        pair_list = [(s,t) for s in range(n) for t in range(n) if s != t]
+    else:
+        pair_list = list(pairs)
+
+    if scores:
+        driver_fn = causal_flow_scores_multichannel_parallel if parallel else causal_flow_scores_multichannel
+    else:
+        driver_fn = causal_flow_multichannel_parallel if parallel else causal_flow_multichannel
+
+    results = {}
+    for (s, t) in pair_list:
+        results[(s, t)] = driver_fn(vid_channels, cause_fnc_confound, s, t, winsize=winsize, **kwargs)
+
+    return results
+
+
+"""
+Separate, simpler joint-regression multi-channel drivers for DDC and LK,
+kept independent from the confound-aware family above for A/B testing.
+
+DDC_cause/Linear_LK_cause get their directional signal from a specific
+mechanism: they stack the *same* block twice ("original" and "copy",
+identical data) and read the resulting cross-block's diagonal -- the
+self-block diagonal alone (each pixel's own autoregression coefficient)
+carries no directional information. So instead of decomposing into
+neighbor positions, these treat the C channels themselves as the "neighbors":
+flatten every channel's center winsize x winsize block once as an "original"
+and once again as a "copy", stack all 2*C blocks into one design matrix, and
+fit ONE differential_covariance/Linear_LK regression per window. Every
+ordered channel pair's directional coefficients are then read directly out
+of that single fit's coefficient matrix (target channel's "original" rows
+vs. source channel's "copy" columns) -- a joint fit across every channel
+already conditions each pairwise coefficient on all the others, so no
+separate confound bookkeeping is needed.
+
+With C=1 the two-copy stack is exactly [ch0, ch0_copy] -- the same stack
+causal_flow(ch0, DDC_cause/Linear_LK_cause, ...) already builds -- so the
+(0,0) result reduces identically to today's single-channel output.
+"""
+
+
+def _joint_ddc_corr_array(originals_flat, copies_flat, winsize, source_idx, target_idx, eps, alpha):
+    from InfoFlow.DDC_flow import differential_covariance
+
+    ws2 = winsize * winsize
+    C = len(originals_flat)
+    stacked = np.vstack(originals_flat + copies_flat)
+
+    W_ = differential_covariance(stacked, eps=eps, alpha=alpha)
+
+    target_rows = slice(target_idx * ws2, (target_idx + 1) * ws2)
+    source_cols = slice(C * ws2 + source_idx * ws2, C * ws2 + (source_idx + 1) * ws2)
+    W_sub = W_[target_rows, source_cols]
+
+    return np.diag(W_sub).reshape(winsize, winsize)
+
+
+def _joint_lk_corr_array(originals_flat, copies_flat, winsize, source_idx, target_idx, eps):
+    from InfoFlow.LK_flow import Linear_LK
+
+    ws2 = winsize * winsize
+    C = len(originals_flat)
+    stacked = np.vstack(originals_flat + copies_flat)
+
+    # Linear_LK_cause does not forward alpha to Linear_LK either -- matched here for exact equivalence at C=1.
+    W_, C_ = Linear_LK(stacked, eps=eps)
+
+    target_rows = slice(target_idx * ws2, (target_idx + 1) * ws2)
+    source_cols = slice(C * ws2 + source_idx * ws2, C * ws2 + (source_idx + 1) * ws2)
+    W_sub = W_[target_rows, source_cols]
+    C_sub = C_[target_rows, source_cols]
+    C_diag_target = np.diag(C_)[target_rows]
+
+    score = np.diag(W_sub) * np.sqrt(np.abs(np.diag(C_sub)) / (C_diag_target + eps) + eps)
+
+    return score.reshape(winsize, winsize)
+
+
+def _joint_center_blocks(windows_dict, ii, winsize, n_channels):
+    ws2 = winsize * winsize
+    originals = [windows_dict[c][ii, winsize:2*winsize, winsize:2*winsize].reshape(ws2, -1) for c in range(n_channels)]
+    copies = [o.copy() for o in originals]
+    return originals, copies
+
+
+def causal_flow_scores_multichannel_joint_ddc(vid_channels, winsize=3, eps=1e-12, alpha=1e-2):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,winsize,winsize)} for all C^2 pairs,
+    computed from one differential_covariance fit per window.
+    """
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    scores = {pair: [] for pair in pair_list}
+
+    for ii in tqdm(np.arange(n_windows)):
+        originals, copies = _joint_center_blocks(windows_dict, ii, winsize, n_channels)
+        for (s, t) in pair_list:
+            scores[(s, t)].append(_joint_ddc_corr_array(originals, copies, winsize, s, t, eps, alpha))
+
+    results = {}
+    for pair in pair_list:
+        arr = np.array(scores[pair]).reshape(xy_coords.shape[:-1] + (winsize, winsize))
+        vid_shape = vid_channels[pair[1]].shape
+        results[pair] = sktform.resize(arr, output_shape=vid_shape[1:] + (winsize, winsize), preserve_range=True, order=1)
+
+    return results
+
+
+def causal_flow_multichannel_joint_ddc(vid_channels, winsize=3, eps=1e-12, alpha=1e-2):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,2)} for all C^2 pairs,
+    computed from one differential_covariance fit per window.
+    """
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    vectors = {pair: [] for pair in pair_list}
+    mid = winsize // 2
+
+    for ii in tqdm(np.arange(n_windows)):
+        originals, copies = _joint_center_blocks(windows_dict, ii, winsize, n_channels)
+        for (s, t) in pair_list:
+            corr_array = _joint_ddc_corr_array(originals, copies, winsize, s, t, eps, alpha)
+            cx = -np.nansum(corr_array[:, :mid]) + np.nansum(corr_array[:, mid+1:])
+            cy = -np.nansum(corr_array[:mid]) + np.nansum(corr_array[mid+1:])
+            intensity = np.nansum(corr_array)
+            mean_vector = np.hstack([cy, cx]) * intensity
+            vectors[(s, t)].append(-mean_vector)
+
+    results = {}
+    for pair in pair_list:
+        vid_shape = vid_channels[pair[1]].shape
+        vec = np.array(vectors[pair]).reshape(xy_coords.shape)
+        vec[..., 0] = ndimage.gaussian_filter(vec[..., 0], sigma=1.)
+        vec[..., 1] = ndimage.gaussian_filter(vec[..., 1], sigma=1.)
+        vec = np.dstack([sktform.resize(vec[..., ch], output_shape=vid_shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+        results[pair] = vec
+
+    return results
+
+
+def causal_flow_scores_multichannel_joint_lk(vid_channels, winsize=3, eps=1e-12):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,winsize,winsize)} for all C^2 pairs,
+    computed from one Linear_LK fit per window.
+    """
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    scores = {pair: [] for pair in pair_list}
+
+    for ii in tqdm(np.arange(n_windows)):
+        originals, copies = _joint_center_blocks(windows_dict, ii, winsize, n_channels)
+        for (s, t) in pair_list:
+            scores[(s, t)].append(_joint_lk_corr_array(originals, copies, winsize, s, t, eps))
+
+    results = {}
+    for pair in pair_list:
+        arr = np.array(scores[pair]).reshape(xy_coords.shape[:-1] + (winsize, winsize))
+        vid_shape = vid_channels[pair[1]].shape
+        results[pair] = sktform.resize(arr, output_shape=vid_shape[1:] + (winsize, winsize), preserve_range=True, order=1)
+
+    return results
+
+
+def causal_flow_multichannel_joint_lk(vid_channels, winsize=3, eps=1e-12):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,2)} for all C^2 pairs,
+    computed from one Linear_LK fit per window.
+    """
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    vectors = {pair: [] for pair in pair_list}
+    mid = winsize // 2
+
+    for ii in tqdm(np.arange(n_windows)):
+        originals, copies = _joint_center_blocks(windows_dict, ii, winsize, n_channels)
+        for (s, t) in pair_list:
+            corr_array = _joint_lk_corr_array(originals, copies, winsize, s, t, eps)
+            cx = -np.nansum(corr_array[:, :mid]) + np.nansum(corr_array[:, mid+1:])
+            cy = -np.nansum(corr_array[:mid]) + np.nansum(corr_array[mid+1:])
+            intensity = np.nansum(corr_array)
+            mean_vector = np.hstack([cy, cx]) * intensity
+            vectors[(s, t)].append(-mean_vector)
+
+    results = {}
+    for pair in pair_list:
+        vid_shape = vid_channels[pair[1]].shape
+        vec = np.array(vectors[pair]).reshape(xy_coords.shape)
+        vec[..., 0] = ndimage.gaussian_filter(vec[..., 0], sigma=1.)
+        vec[..., 1] = ndimage.gaussian_filter(vec[..., 1], sigma=1.)
+        vec = np.dstack([sktform.resize(vec[..., ch], output_shape=vid_shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+        results[pair] = vec
+
+    return results
+
+
+"""
+Separate, simpler joint-regression multi-channel driver for correlation
+(nd_xcorr_lag), kept independent from the confound-aware family for A/B
+testing -- same overall spirit as the DDC/LK joint drivers above, but
+nd_xcorr_lag is structurally different: it already produces a genuine
+winsize x winsize spatial correlation map via scipy.signal.correlate on two
+blocks directly, with no flatten/diagonal-trick needed.
+
+Stacking all C channels' blocks and correlating the stack against ITSELF
+doesn't work here: scipy.signal.correlate's channel-axis output is indexed
+by offset (target_channel - source_channel), not by the actual pair, so
+every within-channel comparison collapses onto the same offset=0 slot
+regardless of which channel, and cross-channel offsets are shared by more
+than one pair once C>2.
+
+Instead, for a given target channel, its own block is used as a size-1
+"kernel" along the channel axis against a "volume" stacking all C channels.
+A size-1 axis can't slide, so correlate degenerates on that axis to an
+independent per-channel-slot correlation -- one call yields the (y,x,time)
+correlation between the target and every actual source channel, indexed
+by real channel index, with no conflation at any C.
+"""
+
+
+def _joint_corr_score(windows_dict, ii, winsize, n_channels, target_idx, lag, mode, demean):
+    import numpy as np
+    from scipy.signal import correlate
+
+    full_stack = np.stack(
+        [windows_dict[c][ii, winsize:2*winsize, winsize:2*winsize] for c in range(n_channels)],
+        axis=2,
+    )  # (winsize, winsize, C, T)
+
+    volume = full_stack[..., :full_stack.shape[-1] - lag].copy()          # all channels' past
+    template = full_stack[:, :, target_idx:target_idx+1, lag:].copy()     # target channel's future
+
+    if demean:
+        volume = volume - volume.mean(axis=-1, keepdims=True)
+        template = template - template.mean(axis=-1, keepdims=True)
+
+    corr = correlate(volume, template, mode=mode)
+    corr = np.nanmax(corr, axis=-1)  # reduce over time, exactly like nd_xcorr_lag
+
+    return corr  # (winsize, winsize, C) -- corr[:, :, s] is the (source=s, target=target_idx) map
+
+
+def causal_flow_scores_multichannel_joint_corr(vid_channels, winsize=3, lag=1, mode='same', demean=False):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,winsize,winsize)} for all C^2 pairs,
+    computed from C correlate() calls per window (one per target channel).
+    """
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    scores = {pair: [] for pair in pair_list}
+
+    for ii in tqdm(np.arange(n_windows)):
+        for t in range(n_channels):
+            corr = _joint_corr_score(windows_dict, ii, winsize, n_channels, t, lag, mode, demean)
+            for s in range(n_channels):
+                scores[(s, t)].append(corr[:, :, s])
+
+    results = {}
+    for pair in pair_list:
+        arr = np.array(scores[pair]).reshape(xy_coords.shape[:-1] + (winsize, winsize))
+        vid_shape = vid_channels[pair[1]].shape
+        results[pair] = sktform.resize(arr, output_shape=vid_shape[1:] + (winsize, winsize), preserve_range=True, order=1)
+
+    return results
+
+
+def causal_flow_multichannel_joint_corr(vid_channels, winsize=3, lag=1, mode='same', demean=False):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,2)} for all C^2 pairs,
+    computed from C correlate() calls per window (one per target channel).
+    """
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    vectors = {pair: [] for pair in pair_list}
+    mid = winsize // 2
+
+    for ii in tqdm(np.arange(n_windows)):
+        for t in range(n_channels):
+            corr = _joint_corr_score(windows_dict, ii, winsize, n_channels, t, lag, mode, demean)
+            for s in range(n_channels):
+                corr_array = corr[:, :, s]
+                cx = -np.nansum(corr_array[:, :mid]) + np.nansum(corr_array[:, mid+1:])
+                cy = -np.nansum(corr_array[:mid]) + np.nansum(corr_array[mid+1:])
+                intensity = np.nansum(corr_array)
+                mean_vector = np.hstack([cy, cx]) * intensity
+                vectors[(s, t)].append(-mean_vector)
+
+    results = {}
+    for pair in pair_list:
+        vid_shape = vid_channels[pair[1]].shape
+        vec = np.array(vectors[pair]).reshape(xy_coords.shape)
+        vec[..., 0] = ndimage.gaussian_filter(vec[..., 0], sigma=1.)
+        vec[..., 1] = ndimage.gaussian_filter(vec[..., 1], sigma=1.)
+        vec = np.dstack([sktform.resize(vec[..., ch], output_shape=vid_shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+        results[pair] = vec
+
+    return results
+
+
+"""
+Separate, simpler joint-regression multi-channel driver for GC, kept
+independent from the confound-aware family for A/B testing.
+
+GC_full_reduced_separate_regress_individual has a real bug (see
+InfoFlow/gc_flow.py's commented-out lines 39-41): its full model uses only
+img2's own history+contemporaneous value, never including img1's (target's)
+own lag history, so the reduced model's regressors aren't a subset of the
+full model's -- logF-logL isn't a valid nested conditional-causality delta.
+
+This driver fixes that AND generalizes to C channels at once: build one
+combined block spanning every channel's own winsize x winsize center
+sub-block (no duplicate "copy" trick needed, unlike DDC/LK -- GC's
+reduced-vs-full comparison already produces a meaningful delta from a single
+combined block, same as today's single-channel usage with img1 is img2).
+
+Per window: one shared REDUCED fit (Y = every channel's own future pixels;
+X_reduced = the combined block's own lagged history, i.e. baseline already
+includes every channel's own history) plus one FULL fit per candidate source
+channel s (X_full_s = X_reduced -- restoring the nesting fix -- plus only
+channel s's own contemporaneous value). Since Y spans every channel,
+delta_s reshaped to (C,winsize,winsize) gives every (source=s,target=t)
+pair's map from just C+1 Ridge fits per window, not C^2.
+"""
+
+
+def causal_flow_scores_multichannel_joint_gc(vid_channels, winsize=3, lag=1, alpha=.1):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,winsize,winsize)} for all C^2 pairs,
+    computed from one shared reduced fit + C full fits (one per candidate source) per window.
+    """
+    from sklearn.linear_model import Ridge
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+    ws2 = winsize * winsize
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    scores = {pair: [] for pair in pair_list}
+
+    for ii in tqdm(np.arange(n_windows)):
+        blocks = [windows_dict[c][ii, winsize:2*winsize, winsize:2*winsize].reshape(ws2, -1) for c in range(n_channels)]
+        combined_t = np.vstack(blocks).T  # (T, C*ws2)
+
+        Y = combined_t[lag:]
+        X_reduced = np.hstack([combined_t[lag-ll:-ll] for ll in range(1, lag+1)])
+
+        clf = Ridge(alpha=alpha)
+        clf.fit(X_reduced, Y)
+        logL = np.log(np.var(Y - clf.predict(X_reduced), axis=0))
+
+        for s in range(n_channels):
+            candidate_now = combined_t[lag:, s*ws2:(s+1)*ws2]
+            X_full = np.hstack([X_reduced, candidate_now])
+
+            clf_full = Ridge(alpha=alpha)
+            clf_full.fit(X_full, Y)
+            logF = np.log(np.var(Y - clf_full.predict(X_full), axis=0))
+
+            delta = (logF - logL).reshape(n_channels, winsize, winsize)
+            for t in range(n_channels):
+                scores[(s, t)].append(delta[t])
+
+    results = {}
+    for pair in pair_list:
+        arr = np.array(scores[pair]).reshape(xy_coords.shape[:-1] + (winsize, winsize))
+        vid_shape = vid_channels[pair[1]].shape
+        results[pair] = sktform.resize(arr, output_shape=vid_shape[1:] + (winsize, winsize), preserve_range=True, order=1)
+
+    return results
+
+
+def causal_flow_multichannel_joint_gc(vid_channels, winsize=3, lag=1, alpha=.1):
+    """
+    Returns dict {(source_idx, target_idx): (H,W,2)} for all C^2 pairs,
+    computed from one shared reduced fit + C full fits (one per candidate source) per window.
+    """
+    from sklearn.linear_model import Ridge
+    import scipy.ndimage as ndimage
+    from tqdm import tqdm
+    import skimage.transform as sktform
+
+    winsize = _snap_odd_winsize(winsize)
+    n_channels = len(vid_channels)
+    ws2 = winsize * winsize
+
+    windows_dict = {}
+    xy_coords = None
+    for c, vid in enumerate(vid_channels):
+        w3, xy = _prepare_windows(vid, winsize)
+        windows_dict[c] = w3
+        xy_coords = xy
+
+    n_windows = len(windows_dict[0])
+    pair_list = [(s, t) for s in range(n_channels) for t in range(n_channels)]
+    vectors = {pair: [] for pair in pair_list}
+    mid = winsize // 2
+
+    for ii in tqdm(np.arange(n_windows)):
+        blocks = [windows_dict[c][ii, winsize:2*winsize, winsize:2*winsize].reshape(ws2, -1) for c in range(n_channels)]
+        combined_t = np.vstack(blocks).T  # (T, C*ws2)
+
+        Y = combined_t[lag:]
+        X_reduced = np.hstack([combined_t[lag-ll:-ll] for ll in range(1, lag+1)])
+
+        clf = Ridge(alpha=alpha)
+        clf.fit(X_reduced, Y)
+        logL = np.log(np.var(Y - clf.predict(X_reduced), axis=0))
+
+        for s in range(n_channels):
+            candidate_now = combined_t[lag:, s*ws2:(s+1)*ws2]
+            X_full = np.hstack([X_reduced, candidate_now])
+
+            clf_full = Ridge(alpha=alpha)
+            clf_full.fit(X_full, Y)
+            logF = np.log(np.var(Y - clf_full.predict(X_full), axis=0))
+
+            delta = (logF - logL).reshape(n_channels, winsize, winsize)
+            for t in range(n_channels):
+                corr_array = delta[t]
+                cx = -np.nansum(corr_array[:, :mid]) + np.nansum(corr_array[:, mid+1:])
+                cy = -np.nansum(corr_array[:mid]) + np.nansum(corr_array[mid+1:])
+                intensity = np.nansum(corr_array)
+                mean_vector = np.hstack([cy, cx]) * intensity
+                vectors[(s, t)].append(-mean_vector)
+
+    results = {}
+    for pair in pair_list:
+        vid_shape = vid_channels[pair[1]].shape
+        vec = np.array(vectors[pair]).reshape(xy_coords.shape)
+        vec[..., 0] = ndimage.gaussian_filter(vec[..., 0], sigma=1.)
+        vec[..., 1] = ndimage.gaussian_filter(vec[..., 1], sigma=1.)
+        vec = np.dstack([sktform.resize(vec[..., ch], output_shape=vid_shape[1:], preserve_range=True, order=1) for ch in np.arange(2)])
+        results[pair] = vec
+
+    return results
+
 
 if __name__=="__main__":
 

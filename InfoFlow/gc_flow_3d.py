@@ -1,0 +1,3 @@
+from InfoFlow.gc_flow import GC_full_reduced_separate_regress_individual as GC_full_reduced_separate_regress_individual_3d
+
+__all__ = ['GC_full_reduced_separate_regress_individual_3d']
