@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "v-InfoTrace"
 dynamic = ["version"]
-description = "Calculate multiscale pixel spatiotemporal information flow for 2D videos"
+description = "Calculate multiscale pixel spatiotemporal information flow for 2D and 3D multichannel videos"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 authors = [

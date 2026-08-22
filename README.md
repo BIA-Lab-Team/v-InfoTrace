@@ -15,6 +15,14 @@ v-InfoTrace (multiscale pixel spatiotemporal information flows) is a formal mode
 - [Issues](#issues)
 - [BIA Lab Links](#bia-lab-links)
 
+[![PyPI version](https://badge.fury.io/py/v-InfoTrace.svg)](https://badge.fury.io/py/v-InfoTrace)
+[![Downloads](https://pepy.tech/badge/v-InfoTrace)](https://pepy.tech/project/v-InfoTrace)
+[![Downloads](https://pepy.tech/badge/v-InfoTrace/month)](https://pepy.tech/project/v-InfoTrace)
+[![Python version](https://img.shields.io/pypi/pyversions/v-InfoTrace)](https://pypistats.org/packages/v-InfoTrace)
+[![GitHub stars](https://img.shields.io/github/stars/BIA-Lab-Team/v-InfoTrace?style=social)](https://github.com/BIA-Lab-Team/v-InfoTrace/)
+[![GitHub forks](https://img.shields.io/github/forks/BIA-Lab-Team/v-InfoTrace?style=social)](https://github.com/BIA-Lab-Team/v-InfoTrace/)
+[![Licence: GPL v3](https://img.shields.io/github/license/BIA-Lab-Team/v-InfoTrace)](https://github.com/BIA-Lab-Team/v-InfoTrace/blob/master/LICENSE)
+
 ## News
 - **v-InfoTrace** derives from the original **u-InfoTrace** and extends it with (1) **multichannel** support — computing both within-channel and cross-channel (confound-aware) causal flow across an arbitrary number of channels, for all five causal measures (DDC, LK, correlation, PCCA, GC), and (2) a **3D** generalization of the full pipeline, extending every causal measure and driver from 2D+time videos to 3D+time (Z,Y,X+time) volumes.
 
